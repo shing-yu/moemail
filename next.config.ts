@@ -22,7 +22,15 @@ const nextConfig = {
       {
         protocol: 'https',
         hostname: '*.googleusercontent.com',
-      }
+      },
+      {
+        protocol: 'https',
+        hostname: 'img.shingyu.cn',
+      },
+      {
+        protocol: 'https',
+        hostname: 'account.o3.hk',
+      },
     ],
   },
 };

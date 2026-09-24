@@ -45,10 +45,9 @@ jobs:
           KV_NAMESPACE_NAME: ${{ secrets.KV_NAMESPACE_NAME }}
           KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
           CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
-          AUTH_GITHUB_ID: ${{ secrets.AUTH_GITHUB_ID }}
-          AUTH_GITHUB_SECRET: ${{ secrets.AUTH_GITHUB_SECRET }}
-          AUTH_GOOGLE_ID: ${{ secrets.AUTH_GOOGLE_ID }}
-          AUTH_GOOGLE_SECRET: ${{ secrets.AUTH_GOOGLE_SECRET }}
+          STAREDGE_CLIENT_ID: ${{ secrets.STAREDGE_CLIENT_ID }}
+          STAREDGE_CLIENT_SECRET: ${{ secrets.STAREDGE_CLIENT_SECRET }}
+          STAREDGE_DUKE_ORGANIZATION_ID: ${{ secrets.STAREDGE_DUKE_ORGANIZATION_ID }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
         run: pnpm dlx tsx scripts/deploy/index.ts
 

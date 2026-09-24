@@ -33,8 +33,7 @@
   <a href="#cli-tool">CLI Tool</a> •
   <a href="#mcp-server">MCP Server</a> •
   <a href="#environment-variables">Environment Variables</a> •
-  <a href="#github-oauth-app-configuration">Github OAuth Config</a> •
-  <a href="#google-oauth-app-configuration">Google OAuth Config</a> •
+  <a href="#staredge-account-oidc-configuration">StarEdge Account OIDC Config</a> •
   <a href="#contribution">Contribution</a> •
   <a href="#license">License</a> •
   <a href="#community">Community</a> •
@@ -78,7 +77,7 @@ The documentation site contains detailed usage guides, API documentation, deploy
 - **Framework**: [Next.js](https://nextjs.org/) (App Router)
 - **Platform**: [Cloudflare Pages](https://pages.cloudflare.com/)
 - **Database**: [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite)
-- **Authentication**: [NextAuth](https://authjs.dev/getting-started/installation?framework=Next.js) with GitHub/Google Login
+- **Authentication**: [NextAuth](https://authjs.dev/getting-started/installation?framework=Next.js) with StarEdge Account (OIDC) single sign-on
 - **Styling**: [Tailwind CSS](https://tailwindcss.com/)
 - **UI Components**: Custom components based on [Radix UI](https://www.radix-ui.com/)
 - **Email Handling**: [Cloudflare Email Workers](https://developers.cloudflare.com/email-routing/)
@@ -120,7 +119,7 @@ Set Cloudflare D1 database name and database ID.
 ```bash
 cp .env.example .env.local
 ```
-Set `AUTH_GITHUB_ID`, `AUTH_GITHUB_SECRET`, `AUTH_SECRET`.
+Set `STAREDGE_CLIENT_ID`, `STAREDGE_CLIENT_SECRET`, `STAREDGE_DUKE_ORGANIZATION_ID` and `AUTH_SECRET`.
 
 5. Create local database schema:
 ```bash
@@ -180,8 +179,9 @@ This project supports automated deployment using GitHub Actions. It supports the
 1. Add the following Secrets in GitHub repository settings:
    - `CLOUDFLARE_API_TOKEN`: Cloudflare API Token
    - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare Account ID
-   - `AUTH_GITHUB_ID`: GitHub OAuth App ID
-   - `AUTH_GITHUB_SECRET`: GitHub OAuth App Secret
+   - `STAREDGE_CLIENT_ID`: StarEdge Account OIDC Client ID
+   - `STAREDGE_CLIENT_SECRET`: StarEdge Account OIDC Client Secret
+   - `STAREDGE_DUKE_ORGANIZATION_ID`: Logto organization ID; users whose `urn:logto:scope:organizations` contains it become Duke, everyone else is Civilian
    - `AUTH_SECRET`: NextAuth Secret, used to encrypt session, please set a random string
    - `CUSTOM_DOMAIN`: Custom domain for the website (Optional, if empty, uses Cloudflare Pages default domain)
    - `PROJECT_NAME`: Pages project name (Optional, if empty, defaults to moemail)
@@ -248,10 +248,9 @@ The project uses a Role-Based Access Control (RBAC) system.
 
 ### Role Configuration
 
-New user default roles are configured by the Emperor in the site settings in the User Profile:
-- Duke: New users get temporary email, Webhook config permissions, and API Key management permissions.
-- Knight: New users get temporary email and Webhook config permissions.
-- Civilian: New users have no permissions, need to wait for Emperor to promote to Knight or Duke.
+Roles are assigned automatically on sign-in based on StarEdge Account (Logto) data:
+- **Duke**: Users whose `urn:logto:scope:organizations` contains the organization configured in `STAREDGE_DUKE_ORGANIZATION_ID`. They get temporary email, Webhook config, and API Key management permissions.
+- **Civilian**: Everyone else. Civilians have no permissions until the Emperor promotes them to Knight or Duke.
 
 ### Role Levels
 
@@ -283,11 +282,12 @@ The system includes four role levels:
 ### Role Upgrade
 
 1. **Become Emperor**
-   - The first user to visit `/api/roles/init-emperor` interface will become the Emperor (Website Owner).
+   - The first user to complete the initialization (visit `/api/roles/init-emperor`) becomes the Emperor (Website Owner).
    - Once an Emperor exists, no other user can be promoted to Emperor.
 
 2. **Role Changes**
    - The Emperor can set other users as Duke, Knight, or Civilian in the User Profile page.
+   - Knight is a panel-managed tier and is never overwritten by the OIDC role sync.
 
 ### Permission Details
 
@@ -301,7 +301,6 @@ The system includes four role levels:
 
 System settings are stored in Cloudflare KV, including:
 
-- `DEFAULT_ROLE`: Default role for new users, values: `CIVILIAN`, `KNIGHT`, `DUKE`
 - `EMAIL_DOMAINS`: Supported email domains, comma-separated
 - `ADMIN_CONTACT`: Administrator contact info
 - `MAX_EMAILS`: Maximum number of emails per user
@@ -655,10 +654,9 @@ For full documentation, see [packages/mcp/README.md](packages/mcp/README.md).
 ## Environment Variables
 
 ### Authentication
-- `AUTH_GITHUB_ID`: GitHub OAuth App ID
-- `AUTH_GITHUB_SECRET`: GitHub OAuth App Secret
-- `AUTH_GOOGLE_ID`: Google OAuth App ID
-- `AUTH_GOOGLE_SECRET`: Google OAuth App Secret
+- `STAREDGE_CLIENT_ID`: StarEdge Account (Logto) OIDC Client ID
+- `STAREDGE_CLIENT_SECRET`: StarEdge Account (Logto) OIDC Client Secret
+- `STAREDGE_DUKE_ORGANIZATION_ID`: Logto organization ID; users whose `urn:logto:scope:organizations` contains this organization are Duke, everyone else is Civilian
 - `AUTH_SECRET`: NextAuth Secret
 
 ### Cloudflare
@@ -671,25 +669,18 @@ For full documentation, see [packages/mcp/README.md](packages/mcp/README.md).
 - `CUSTOM_DOMAIN`: Custom domain
 - `PROJECT_NAME`: Pages Project Name
 
-## Github OAuth App Configuration
+## StarEdge Account OIDC Configuration
 
-1. Login [Github Developer](https://github.com/settings/developers) create new OAuth App
-2. Generate `Client ID` and `Client Secret`
-3. Configure:
-   - `Application name`: `<your-app-name>`
-   - `Homepage URL`: `https://<your-domain>`
-   - `Authorization callback URL`: `https://<your-domain>/api/auth/callback/github`
+Login/registration is handled exclusively through StarEdge Account (Logto) OIDC — username/password, GitHub and Google logins are disabled. Users are automatically registered on first sign-in.
 
-## Google OAuth App Configuration
-
-1. Visit [Google Cloud Console](https://console.cloud.google.com/) create project
-2. Configure OAuth consent screen
-3. Create OAuth Client ID
-   - Type: Web application
-   - Authorized Javascript origins: `https://<your-domain>`
-   - Authorized redirect URIs: `https://<your-domain>/api/auth/callback/google`
-4. Get `Client ID` and `Client Secret`
-5. Configure env vars `AUTH_GOOGLE_ID` and `AUTH_GOOGLE_SECRET`
+1. Create an OIDC application in StarEdge Account (Logto) with discovery endpoint
+   `https://account.o3.hk/oidc/.well-known/openid-configuration`.
+2. Generate `Client ID` and `Client Secret`.
+3. Configure the redirect/callback URI: `https://<your-domain>/api/auth/callback/staredge`
+4. Set env vars `STAREDGE_CLIENT_ID` and `STAREDGE_CLIENT_SECRET`.
+5. Grant the `urn:logto:scope:organizations` scope (and create an organization in Logto) if you need Duke users.
+6. Set `STAREDGE_DUKE_ORGANIZATION_ID` to the Logto organization ID whose members become Dukes.
+7. After your first sign-in, visit `/api/roles/init-emperor` to complete the initialization and become the Emperor.
 
 ## Contribution
 

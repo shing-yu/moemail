@@ -21,6 +21,7 @@ export async function GET() {
     },
   });
 
+  // 第一个完成初始化的用户成为皇帝；已有皇帝后，其他人无法登基
   if (emperorRole && emperorRole.userRoles.length > 0) {
     return Response.json({ error: "已存在皇帝, 谋反将被处死" }, { status: 400 });
   }
@@ -58,4 +59,4 @@ export async function GET() {
       { status: 500 }
     );
   }
-} 
+}

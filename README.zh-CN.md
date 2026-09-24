@@ -32,8 +32,7 @@
   <a href="#cli-工具">CLI 工具</a> •
   <a href="#mcp-服务器">MCP 服务器</a> •
   <a href="#环境变量">环境变量</a> •
-  <a href="#Github OAuth App 配置">Github OAuth App 配置</a> •
-  <a href="#Google OAuth App 配置">Google OAuth App 配置</a> •
+  <a href="#StarEdge Account OIDC 配置">StarEdge Account OIDC 配置</a> •
   <a href="#贡献">贡献</a> •
   <a href="#许可证">许可证</a> •
   <a href="#交流群">交流群</a> •
@@ -78,7 +77,7 @@
 - **框架**: [Next.js](https://nextjs.org/) (App Router)
 - **平台**: [Cloudflare Pages](https://pages.cloudflare.com/)
 - **数据库**: [Cloudflare D1](https://developers.cloudflare.com/d1/) (SQLite)
-- **认证**: [NextAuth](https://authjs.dev/getting-started/installation?framework=Next.js) 配合 GitHub 登录
+- **认证**: [NextAuth](https://authjs.dev/getting-started/installation?framework=Next.js) 配合 StarEdge Account（OIDC）单点登录
 - **样式**: [Tailwind CSS](https://tailwindcss.com/)
 - **UI 组件**: 基于 [Radix UI](https://www.radix-ui.com/) 的自定义组件
 - **邮件处理**: [Cloudflare Email Workers](https://developers.cloudflare.com/email-routing/)
@@ -120,7 +119,7 @@ cp wrangler.cleanup.example.json wrangler.cleanup.json
 ```bash
 cp .env.example .env.local
 ```
-设置 AUTH_GITHUB_ID, AUTH_GITHUB_SECRET, AUTH_SECRET
+设置 STAREDGE_CLIENT_ID, STAREDGE_CLIENT_SECRET, STAREDGE_DUKE_ORGANIZATION_ID, AUTH_SECRET
 
 5. 创建本地数据库表结构
 ```bash
@@ -179,8 +178,9 @@ pnpm dlx tsx ./scripts/deploy/index.ts
 1. 在 GitHub 仓库设置中添加以下 Secrets：
    - `CLOUDFLARE_API_TOKEN`: Cloudflare API 令牌
    - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare 账户 ID
-   - `AUTH_GITHUB_ID`: GitHub OAuth App ID
-   - `AUTH_GITHUB_SECRET`: GitHub OAuth App Secret
+   - `STAREDGE_CLIENT_ID`: StarEdge Account OIDC Client ID
+   - `STAREDGE_CLIENT_SECRET`: StarEdge Account OIDC Client Secret
+   - `STAREDGE_DUKE_ORGANIZATION_ID`: Logto 组织 ID；`urn:logto:scope:organizations` 中包含该组织的用户为公爵，否则为平民
    - `AUTH_SECRET`: NextAuth Secret，用来加密 session，请设置一个随机字符串
    - `CUSTOM_DOMAIN`: 网站自定义域名，用于访问 MoeMail (可选， 如果不填, 则会使用 Cloudflare Pages 默认域名)
    - `PROJECT_NAME`: Pages 项目名 （可选，如果不填，则为 moemail） 
@@ -247,10 +247,9 @@ pnpm dlx tsx ./scripts/deploy/index.ts
 
 ### 角色配置
 
-新用户默认角色由皇帝在个人中心的网站设置中配置：
-- 公爵：新用户将获得临时邮箱、Webhook 配置权限以及 API Key 管理权限
-- 骑士：新用户将获得临时邮箱和 Webhook 配置权限
-- 平民：新用户无任何权限，需要等待皇帝册封为骑士或公爵
+登录时根据 StarEdge Account（Logto）数据自动分配角色：
+- 公爵：`urn:logto:scope:organizations` 中包含 `STAREDGE_DUKE_ORGANIZATION_ID` 所配置组织的用户。获得临时邮箱、Webhook 配置以及 API Key 管理权限。
+- 平民：其余所有用户。平民无任何权限，需要等待皇帝册封为骑士或公爵。
 
 ### 角色等级
 
@@ -282,11 +281,12 @@ pnpm dlx tsx ./scripts/deploy/index.ts
 ### 角色升级
 
 1. **成为皇帝**
-   - 第一个访问 `/api/roles/init-emperor` 接口的用户将成为皇帝，即网站所有者
+   - 第一个完成初始化的用户（访问 `/api/roles/init-emperor` 接口）将成为皇帝，即网站所有者
    - 站点已有皇帝后，无法再提升其他用户为皇帝
 
 2. **角色变更**
    - 皇帝可以在个人中心页面将其他用户设为公爵、骑士或平民
+   - 骑士为面板管理的等级，不会被 OIDC 角色同步覆盖
 
 ### 权限说明
 
@@ -300,7 +300,6 @@ pnpm dlx tsx ./scripts/deploy/index.ts
 
 系统设置存储在 Cloudflare KV 中，包括以下内容：
 
-- `DEFAULT_ROLE`: 新注册用户默认角色，可选值为 `CIVILIAN`、`KNIGHT`、`DUKE`
 - `EMAIL_DOMAINS`: 支持的邮箱域名，多个域名用逗号分隔
 - `ADMIN_CONTACT`: 管理员联系方式
 - `MAX_EMAILS`: 每个用户可创建的最大邮箱数量
@@ -895,10 +894,9 @@ MoeMail 同时提供 [MCP](https://modelcontextprotocol.io) 服务器，让任�
 本项目使用以下环境变量：
 
 ### 认证相关
-- `AUTH_GITHUB_ID`: GitHub OAuth App ID
-- `AUTH_GITHUB_SECRET`: GitHub OAuth App Secret
-- `AUTH_GOOGLE_ID`: Google OAuth App ID
-- `AUTH_GOOGLE_SECRET`: Google OAuth App Secret
+- `STAREDGE_CLIENT_ID`: StarEdge Account（Logto）OIDC Client ID
+- `STAREDGE_CLIENT_SECRET`: StarEdge Account（Logto）OIDC Client Secret
+- `STAREDGE_DUKE_ORGANIZATION_ID`: Logto 组织 ID；`urn:logto:scope:organizations` 中包含该组织的用户为公爵，否则为平民
 - `AUTH_SECRET`: NextAuth Secret，用来加密 session，请设置一个随机字符串
 
 ### Cloudflare 配置
@@ -911,25 +909,17 @@ MoeMail 同时提供 [MCP](https://modelcontextprotocol.io) 服务器，让任�
 - `CUSTOM_DOMAIN`: 网站自定义域名, 如：moemail.app (可选， 如果不填, 则会使用 Cloudflare Pages 默认域名)
 - `PROJECT_NAME`: Pages 项目名 （可选，如果不填，则为 moemail） 
 
-## Github OAuth App 配置
+## StarEdge Account OIDC 配置
 
-1. 登录 [Github Developer](https://github.com/settings/developers) 创建一个新的 OAuth App
-2. 生成一个新的 `Client ID` 和 `Client Secret`
-3. 配置参数：
-   - `Application name`: `<your-app-name>`
-   - `Homepage URL`: `https://<your-domain>`
-   - `Authorization callback URL`: `https://<your-domain>/api/auth/callback/github`
+登录/注册仅通过 StarEdge Account（Logto）OIDC 完成——账号密码、GitHub、Google 登录均已禁用。首次登录自动注册。
 
-## Google OAuth App 配置
-
-1. 访问 [Google Cloud Console](https://console.cloud.google.com/) 创建项目
-2. 配置 OAuth 同意屏幕
-3. 创建 OAuth 客户端 ID
-   - 应用类型：Web 应用
-   - 已获授权的 Javascript 来源：`https://<your-domain>`
-   - 已获授权的重定向 URI：`https://<your-domain>/api/auth/callback/google`
-4. 获取 `Client ID` 和 `Client Secret`
-5. 配置环境变量 `AUTH_GOOGLE_ID` 和 `AUTH_GOOGLE_SECRET`
+1. 在 StarEdge Account（Logto）中创建 OIDC 应用，发现端点：`https://account.o3.hk/oidc/.well-known/openid-configuration`
+2. 生成 `Client ID` 和 `Client Secret`
+3. 配置回调 URI：`https://<your-domain>/api/auth/callback/staredge`
+4. 配置环境变量 `STAREDGE_CLIENT_ID` 和 `STAREDGE_CLIENT_SECRET`
+5. 需要公爵等级时，在 Logto 中创建组织并授权 `urn:logto:scope:organizations` 范围
+6. 将公爵组织 ID 填入 `STAREDGE_DUKE_ORGANIZATION_ID`，该组织成员登录后即为公爵
+7. 首次登录后访问 `/api/roles/init-emperor` 完成初始化，即可成为皇帝
 
 
 

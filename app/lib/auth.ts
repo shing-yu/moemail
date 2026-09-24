@@ -1,38 +1,51 @@
 import NextAuth from "next-auth"
-import GitHub from "next-auth/providers/github"
-import Google from "next-auth/providers/google"
 import { DrizzleAdapter } from "@auth/drizzle-adapter"
 import { createDb, Db } from "./db"
 import { accounts, users, roles, userRoles } from "./schema"
 import { eq } from "drizzle-orm"
 import { getRequestContext } from "@cloudflare/next-on-pages"
 import { Permission, hasPermission, ROLES, Role } from "./permissions"
-import CredentialsProvider from "next-auth/providers/credentials"
-import { hashPassword, comparePassword } from "@/lib/utils"
-import { authSchema, AuthSchema } from "@/lib/validation"
 import { generateAvatarUrl } from "./avatar"
 import { getUserId } from "./apiKey"
-import { verifyTurnstileToken } from "./turnstile"
+
+// StarEdge Account（Logto）OIDC 接入
+// 发现文档: https://account.o3.hk/oidc/.well-known/openid-configuration
+export const STAREDGE_ISSUER = "https://account.o3.hk/oidc"
+export const STAREDGE_LOGO = "https://img.shingyu.cn/acc/favicon.webp"
+const STAREDGE_SCOPE = "openid offline_access profile email urn:logto:scope:organizations"
+
+/**
+ * 读取环境变量：Cloudflare Pages 运行时优先从 request context 读取，
+ * 本地开发回退到 process.env。
+ */
+export function getEnv(name: string): string | undefined {
+  try {
+    const env = getRequestContext().env as unknown as Record<string, unknown>
+    const value = env[name]
+    if (typeof value === "string" && value.trim()) return value
+  } catch {
+    // 非 Cloudflare 运行时
+  }
+
+  const value = process.env[name]
+  return value && value.trim() ? value : undefined
+}
+
+interface StarEdgeProfile {
+  sub: string
+  name?: string
+  username?: string
+  preferred_username?: string
+  email?: string
+  picture?: string
+  organizations?: string[]
+}
 
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   [ROLES.EMPEROR]: "皇帝（网站所有者）",
   [ROLES.DUKE]: "公爵（超级用户）",
   [ROLES.KNIGHT]: "骑士（高级用户）",
   [ROLES.CIVILIAN]: "平民（普通用户）",
-}
-
-const getDefaultRole = async (): Promise<Role> => {
-  const defaultRole = await getRequestContext().env.SITE_CONFIG.get("DEFAULT_ROLE")
-
-  if (
-    defaultRole === ROLES.DUKE ||
-    defaultRole === ROLES.KNIGHT ||
-    defaultRole === ROLES.CIVILIAN
-  ) {
-    return defaultRole as Role
-  }
-
-  return ROLES.CIVILIAN
 }
 
 async function findOrCreateRole(db: Db, roleName: Role) {
@@ -88,95 +101,95 @@ export async function checkPermission(permission: Permission) {
   return hasPermission(userRoleNames as Role[], permission)
 }
 
+/**
+ * 根据 StarEdge Account（Logto）OIDC 信息决定角色：
+ * - `urn:logto:scope:organizations` 声明中包含 STAREDGE_DUKE_ORGANIZATION_ID → 公爵
+ * - 其余 → 平民
+ * 皇帝由第一个完成初始化（/api/roles/init-emperor）的用户获得；
+ * 公爵/平民遵守管理员面板中设置的限制；面板手动授予的皇帝/骑士身份保持不变。
+ */
+async function syncRoleOnSignIn(
+  userId: string,
+  profile: StarEdgeProfile | undefined,
+) {
+  const db = createDb()
+
+  const existing = await db.query.userRoles.findFirst({
+    where: eq(userRoles.userId, userId),
+    with: { role: true },
+  })
+  const currentRoleName = existing?.role?.name
+
+  // 保留皇帝/骑士身份（皇帝来自初始化登基，骑士由管理员面板授予）
+  if (currentRoleName === ROLES.EMPEROR || currentRoleName === ROLES.KNIGHT) {
+    return
+  }
+
+  const dukeOrganizationId = getEnv("STAREDGE_DUKE_ORGANIZATION_ID")
+  const isDuke = Boolean(
+    dukeOrganizationId &&
+    Array.isArray(profile?.organizations) &&
+    profile!.organizations!.some((org) => String(org) === dukeOrganizationId)
+  )
+
+  const oidcRole = isDuke ? ROLES.DUKE : ROLES.CIVILIAN
+  if (currentRoleName !== oidcRole) {
+    const role = await findOrCreateRole(db, oidcRole)
+    await assignRoleToUser(db, userId, role.id)
+  }
+}
+
 export const {
   handlers: { GET, POST },
   auth,
   signIn,
   signOut
 } = NextAuth(() => ({
-  secret: process.env.AUTH_SECRET,
+  secret: getEnv("AUTH_SECRET"),
   adapter: DrizzleAdapter(createDb(), {
     usersTable: users,
     accountsTable: accounts,
   }),
   providers: [
-    GitHub({
-      clientId: process.env.AUTH_GITHUB_ID,
-      clientSecret: process.env.AUTH_GITHUB_SECRET,
-      allowDangerousEmailAccountLinking: true,
-      issuer: "https://github.com/login/oauth",
-    }),
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
-      allowDangerousEmailAccountLinking: true,
-    }),
-    CredentialsProvider({
-      name: "Credentials",
-      credentials: {
-        username: { label: "用户名", type: "text", placeholder: "请输入用户名" },
-        password: { label: "密码", type: "password", placeholder: "请输入密码" },
+    {
+      id: "staredge",
+      name: "StarEdge Account",
+      type: "oidc",
+      issuer: getEnv("STAREDGE_ISSUER") || STAREDGE_ISSUER,
+      clientId: getEnv("STAREDGE_CLIENT_ID"),
+      clientSecret: getEnv("STAREDGE_CLIENT_SECRET"),
+      checks: ["pkce", "state"],
+      // 从 userinfo 端点获取 profile，以确保拿到 organizations 声明
+      //（urn:logto:scope:organizations 授予时，Logto 会在 userinfo 中返回 organizations 数组）
+      idToken: false,
+      authorization: {
+        params: {
+          scope: STAREDGE_SCOPE,
+        },
       },
-      async authorize(credentials) {
-        if (!credentials) {
-          throw new Error("请输入用户名和密码")
-        }
-
-        const { username, password, turnstileToken } = credentials as Record<string, string | undefined>
-
-        let parsedCredentials: AuthSchema
-        try {
-          parsedCredentials = authSchema.parse({ username, password, turnstileToken })
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        } catch (error) {
-          throw new Error("输入格式不正确")
-        }
-
-        const verification = await verifyTurnstileToken(parsedCredentials.turnstileToken)
-        if (!verification.success) {
-          if (verification.reason === "missing-token") {
-            throw new Error("请先完成安全验证")
-          }
-          throw new Error("安全验证未通过")
-        }
-
-        const db = createDb()
-
-        const user = await db.query.users.findFirst({
-          where: eq(users.username, parsedCredentials.username),
-        })
-
-        if (!user) {
-          throw new Error("用户名或密码错误")
-        }
-
-        const isValid = await comparePassword(parsedCredentials.password, user.password as string)
-        if (!isValid) {
-          throw new Error("用户名或密码错误")
-        }
-
+      profile(profile: StarEdgeProfile) {
+        const name = profile.name ?? profile.username ?? profile.preferred_username
         return {
-          ...user,
-          password: undefined,
+          id: profile.sub,
+          name,
+          username: profile.username ?? profile.preferred_username,
+          email: profile.email,
+          // 无头像时由 jwt 回调生成首字母头像
+          image: profile.picture,
         }
       },
-    }),
+    },
   ],
   events: {
-    async signIn({ user }) {
+    async signIn({ user, account, profile }) {
       if (!user.id) return
+      if (account?.provider !== "staredge") return
 
       try {
-        const db = createDb()
-        const existingRole = await db.query.userRoles.findFirst({
-          where: eq(userRoles.userId, user.id),
-        })
-
-        if (existingRole) return
-
-        const defaultRole = await getDefaultRole()
-        const role = await findOrCreateRole(db, defaultRole)
-        await assignRoleToUser(db, user.id, role.id)
+        await syncRoleOnSignIn(
+          user.id,
+          profile as StarEdgeProfile | undefined,
+        )
       } catch (error) {
         console.error('Error assigning role:', error)
       }
@@ -206,8 +219,8 @@ export const {
         })
 
         if (!userRoleRecords.length) {
-          const defaultRole = await getDefaultRole()
-          const role = await findOrCreateRole(db, defaultRole)
+          // 兜底：登入时未成功分配角色（例如 signIn 事件失败），按平民处理
+          const role = await findOrCreateRole(db, ROLES.CIVILIAN)
           await assignRoleToUser(db, session.user.id, role.id)
           userRoleRecords = [{
             userId: session.user.id,
@@ -235,26 +248,3 @@ export const {
     strategy: "jwt",
   },
 }))
-
-export async function register(username: string, password: string) {
-  const db = createDb()
-
-  const existing = await db.query.users.findFirst({
-    where: eq(users.username, username)
-  })
-
-  if (existing) {
-    throw new Error("用户名已存在")
-  }
-
-  const hashedPassword = await hashPassword(password)
-
-  const [user] = await db.insert(users)
-    .values({
-      username,
-      password: hashedPassword,
-    })
-    .returning()
-
-  return user
-}

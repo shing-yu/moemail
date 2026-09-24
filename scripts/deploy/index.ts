@@ -279,10 +279,9 @@ const pushPagesSecret = () => {
 
   // 定义运行时所需的环境变量列表
   const runtimeEnvVars = [
-    'AUTH_GITHUB_ID', 
-    'AUTH_GITHUB_SECRET', 
-    'AUTH_GOOGLE_ID', 
-    'AUTH_GOOGLE_SECRET', 
+    'STAREDGE_CLIENT_ID', 
+    'STAREDGE_CLIENT_SECRET', 
+    'STAREDGE_DUKE_ORGANIZATION_ID', 
     'AUTH_SECRET'
   ];
 
