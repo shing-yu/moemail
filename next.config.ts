@@ -31,6 +31,10 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'account.o3.hk',
       },
+      {
+        protocol: 'https',
+        hostname: 's3.o3.hk',
+      },
     ],
   },
 };
